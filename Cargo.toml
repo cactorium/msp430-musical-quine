@@ -1,0 +1,6 @@
+[package]
+name = "quine"
+version = "0.1.0"
+authors = ["Kelvin Ly <kelvin.ly1618@gmail.com>"]
+
+[dependencies]
