@@ -1,7 +1,11 @@
-#[derive(Clone, Copy, Debug)]
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::rc::Rc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Symbol {
-    Literal(u8),
-    Offset(u8),
+    Literal(usize),
+    Offset(usize),
 }
 
 struct RingBuffer {
@@ -107,23 +111,23 @@ fn lz77_enc(input: &[u8]) -> Vec<Symbol> {
         match search_substr(&input[i..input.len()], &window) {
             Some((pos, len)) => {
                 assert!(pos < 256);
-                assert!(len < 256);
+                // assert!(len < 256);
                 // runs of length less than 4 are probably better encoded
                 // as literals; it's hard to be sure because of the Huffman
                 // encoding layer on top of this
                 if len < 4 {
-                    ret.push(Symbol::Literal(input[i]));
+                    ret.push(Symbol::Literal(input[i] as usize));
                     window.push(&input[i..i+1]);
                     i += 1;
                 } else {
-                    ret.push(Symbol::Offset(pos as u8));
-                    ret.push(Symbol::Literal(len as u8));
+                    ret.push(Symbol::Offset(pos));
+                    ret.push(Symbol::Literal(len));
                     window.push(&input[i..i+len]);
                     i += len;
                 }
             },
             None => {
-                ret.push(Symbol::Literal(input[i]));
+                ret.push(Symbol::Literal(input[i] as usize));
                 window.push(&input[i..i+1]);
                 i += 1;
             },
@@ -150,7 +154,7 @@ fn lz77_dec(input: &[Symbol]) -> Vec<u8> {
                 *skip_input = false;
                 match input {
                     &Symbol::Literal(c) => {
-                        Some(Some(StreamToken::Literal(c)))
+                        Some(Some(StreamToken::Literal(c as u8)))
                     },
                     &Symbol::Offset(o) => {
                         match next_input {
@@ -209,27 +213,218 @@ fn test_lz77() {
     }
 }
 
-struct Huffman {
+#[derive(Debug)]
+enum Huffman<S> {
+    Branch(Rc<Huffman<S>>, Rc<Huffman<S>>),
+    Leaf(S),
 }
 
-fn huffman_dict(input: Vec<Symbol>) -> Huffman {
-    unimplemented!()
+#[derive(Debug)]
+struct HuffmanDict<S> {
+    root: Rc<Huffman<S>>
+}
+
+fn huffman_dict<S: Eq + Hash + Copy>(input: &[S]) -> HuffmanDict<S> {
+    let mut dict: HashMap<S, usize> = HashMap::new();
+    let mut symbol_list = Vec::new();
+    for i in input {
+        let entry = dict.entry(*i).or_insert_with(|| {symbol_list.push(*i); 0});
+        *entry += 1;
+    }
+    let mut leaves: Vec<(usize, Rc<Huffman<S>>)> = symbol_list
+        .iter()
+        .map(|sym| {
+            (dict[sym], Rc::new(Huffman::Leaf(*sym)))
+        })
+        .collect();
+    while leaves.len() >= 2 {
+        leaves.sort_by_key(|&(w, _)| -(w as isize));
+        let ((w0, a), (w1, b)) = (leaves.pop().unwrap(), leaves.pop().unwrap());
+        let new_node = Rc::new(Huffman::Branch(a, b));
+        leaves.push((w0 + w1, new_node));
+    }
+    let (_, root) = leaves.pop().unwrap();
+    HuffmanDict {
+        root: root
+    }
+}
+
+fn huffman_enc<S: Eq + Hash + Copy>(input: &[S]) -> (Vec<u8>, usize, HuffmanDict<S>) {
+    let dict = huffman_dict(input);
+    let mut mapping: HashMap<S, Vec<bool>> = HashMap::new();
+    {
+        fn recursively_map<T: Eq + Hash + Copy>(prefix: Vec<bool>, node: &Huffman<T>, mapping: &mut HashMap<T, Vec<bool>>) {
+            match node {
+                &Huffman::Branch(ref a, ref b) => {
+                    let mut prefixa = prefix.clone();
+                    let mut prefixb = prefix;
+                    prefixa.push(false);
+                    prefixb.push(true);
+                    recursively_map(prefixa, &*a, mapping);
+                    recursively_map(prefixb, &*b, mapping);
+                },
+                &Huffman::Leaf(sym) => {
+                    mapping.insert(sym, prefix);
+                },
+            }
+        }
+        recursively_map(Vec::new(), &*dict.root, &mut mapping);
+    }
+
+    let mut ret = Vec::<u8>::new();
+    let mut len = 0;
+
+    {
+        for s in input {
+            for bit in &mapping[s] {
+                if len % 8 == 0 {
+                    ret.push(0);
+                }
+                if *bit {
+                    *ret.last_mut().unwrap() |= 1 << (len % 8);
+                }
+                len += 1;
+            }
+        }
+    }
+    (ret, len, dict)
+}
+
+fn huffman_dec<S: Copy>(input: &[u8], len: usize, dict: &HuffmanDict<S>) -> Vec<S> {
+    let mut pos = 0;
+    let mut dict_pos = &*dict.root;
+    let mut ret = Vec::new();
+    while pos < len {
+        match dict_pos {
+            &Huffman::Leaf(sym) => {
+                ret.push(sym);
+                dict_pos = &*dict.root;
+            },
+            &Huffman::Branch(ref a, ref b) => {
+                let bit = input[pos/8] & (1 << (pos % 8));
+                pos += 1;
+
+                if bit == 0 {
+                    dict_pos = &*a;
+                } else {
+                    dict_pos = &*b;
+                }
+            },
+        }
+    }
+
+    match dict_pos {
+         &Huffman::Leaf(sym) => {
+            ret.push(sym);
+            dict_pos = &*dict.root;
+         },
+         _ => unreachable!("decoder reached EOS in wrong state"),
+    }
+    ret
+}
+
+fn huffman_dec_c(input: &HuffmanDict<Symbol>) -> String {
+    let mut s = String::from("int pos = 0;\n");
+    s += "void dec() {\n";
+    s += "  while (pos < len) {\n";
+    fn recursively_if(s: &mut String, pos: &Huffman<Symbol>, indent: usize) {
+        let indent_stuff = |s: &mut String, x| {
+            for _ in 0..x {
+                *s += "  ";
+            }
+        };
+
+        match pos {
+            &Huffman::Leaf(sym) => {
+                indent_stuff(s, indent);
+                match sym {
+                    Symbol::Literal(c) => {
+                        *s += format!("LITERAL({});\n", c).as_str();
+                    },
+                    Symbol::Offset(o) => {
+                        *s += format!("LEN({});\n", o).as_str();
+                    }
+                }
+            },
+            &Huffman::Branch(ref a, ref b) => {
+                indent_stuff(s, indent);
+                *s += "if (bit) {\n";
+                indent_stuff(s, indent + 1);
+                *s += "NEXT_BIT;\n";
+                recursively_if(s, &*b, indent + 1);
+                indent_stuff(s, indent);
+                *s += "} else {\n";
+                indent_stuff(s, indent + 1);
+                *s += "NEXT_BIT;\n";
+                recursively_if(s, &*a, indent + 1);
+                indent_stuff(s, indent);
+                *s += "}\n";
+            },
+        }
+    }
+    recursively_if(&mut s, &*input.root, 2);
+    s += "  }\n";
+    s += "}";
+    s
+}
+
+fn c_lit(chars: &[u8]) -> String {
+    let mut s = String::from("{");
+    for c in chars {
+        s += format!("{}, ", *c).as_str();
+    }
+    s += "0}"; // fuck it, we're generating C anyways
+    s
 }
 
 fn main() {
     use std::io;
-    use std::io::Read;
+    use std::io::{Read, Write};
+    let stderr = &mut io::stderr();
 
     let mut string = String::new();
     let mut input = io::stdin().read_to_string(&mut string);
 
-    let stream = lz77_enc(string.as_bytes());
-    println!("// orig {} stream {}", string.len(), stream.len());
-    println!("// checking decode...");
-    let dec_string = String::from_utf8(lz77_dec(&stream)).unwrap();
-    if string == dec_string {
-        println!("// decode successful");
+    let string_parsed = {
+        use std::iter;
+        string.lines()
+            .zip(iter::once("").chain(string.lines()))
+            .map(|(x, prev)| {
+                let replace_str = "//+replace ";
+                if prev.starts_with(replace_str) {
+                    &prev[replace_str.len()..]
+                } else {
+                    x
+                }
+            })
+            .fold(String::new(), |mut x, y| { x += y; x += "\n"; x })
+    };
+
+    let stream = lz77_enc(string_parsed.as_bytes());
+    writeln!(stderr, "// orig {} 77z {}", string.len(), stream.len()).unwrap();
+    let (huffman_enc, huffman_len, dict) = huffman_enc(&stream);
+    // writeln!(stderr, "// {:?}", dict).unwrap();
+    writeln!(stderr, "// huffman {} bits, {} bytes", huffman_len, (huffman_len + 7)/8).unwrap();
+
+    writeln!(stderr, "// checking decode...").unwrap();
+    let dec_string = String::from_utf8(lz77_dec(&huffman_dec(&huffman_enc, huffman_len, &dict))).unwrap();
+    if string_parsed == dec_string {
+        writeln!(stderr, "// decode successful").unwrap();
+        // writeln!(stderr, "{}", dec_string).unwrap();
     } else {
-        println!("// decode fail");
+        writeln!(stderr, "// decode fail").unwrap();
+        writeln!(stderr, "{:?}\n{:?}", string, dec_string).unwrap();
     }
+    let mut autogen_start = false;
+    for line in string.lines() {
+        if !autogen_start {
+            println!("{}", line);
+            autogen_start = line.starts_with("///AUTOGEN START");
+        }
+    }
+    // stop from trying to encode the previous code
+    println!("//+replace CODE;");
+    println!("const char code[] = {}; const int len = {};", c_lit(&huffman_enc), huffman_len);
+    println!("");
+    println!("{}", huffman_dec_c(&dict));
 }
