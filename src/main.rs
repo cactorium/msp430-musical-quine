@@ -481,13 +481,20 @@ fn main() {
         writeln!(stderr, "// decode fail").unwrap();
         writeln!(stderr, "{:?}\n{:?}", string, dec_string).unwrap();
     }
-    let mut autogen_start = false;
-    for line in string.lines() {
+
+    {
+        let mut autogen_start = false;
+        for line in string.lines() {
+            if !autogen_start {
+                println!("{}", line);
+                autogen_start = line.starts_with("///AUTOGEN START");
+            }
+        }
         if !autogen_start {
-            println!("{}", line);
-            autogen_start = line.starts_with("///AUTOGEN START");
+            println!("///AUTOGEN START");
         }
     }
+
     let huff_dict_ary = huffman_dict_c(&dict);
     writeln!(stderr, "// huffman dict {} entries, {} bytes", huff_dict_ary.len(), 2*huff_dict_ary.len()).unwrap();
     writeln!(stderr, "// total len {} bytes", huffman_enc.len() + 2*huff_dict_ary.len()).unwrap();
@@ -498,4 +505,15 @@ fn main() {
     println!("//+replace DICT;");
     println!("const int16_t huffman[] = {};", c_lit_int(&huff_dict_ary));
     println!("{}", huffman_dec_f());
+    println!("///AUTOGEN END");
+
+    let mut autogen_end = false;
+    for line in string.lines() {
+        if autogen_end {
+            println!("{}", line);
+        }
+        if !autogen_end {
+            autogen_end = line.starts_with("///AUTOGEN END");
+        }
+    }
 }

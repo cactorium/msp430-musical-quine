@@ -163,8 +163,12 @@ int main() {
   UCA0CTL1 &= ~UCSWRST; // **Initialize USCI state machine**
   /// UC0IE |= UCA0RXIE; // Enable USCI_A0 RX interrupt
 
+  // TODO: Configure TIMERA0
+
+  // Enable interrupts
   _BIS_GR(GIE);
 
+  // Poll for UART input
   int str_pos = 0;
   while (1) {
     while (!(IFG2 & UCA0RXIFG));
@@ -195,35 +199,36 @@ void rly_uartch(char ch) {
 }
 
 void rly_uarts(char* s) {
-  while (!*s) {
+  while (*s) {
     rly_uartch(*s);
     ++s;
   }
 }
 
+void rly_uartint(int16_t i) {
+  const char nums[] = "0123456789";
+  char tmp[6];
+  int l = 0;
+  if (i == 0) {
+    rly_uartch(nums[0]);
+    return;
+  }
+  if (i < 0) {
+    rly_uartch('-');
+    i = -i;
+  }
+  while (i) {
+    tmp[4-l] = num[i % 10];
+    i = i / 10;
+    ++l;
+  }
+  tmp[5] = '\0';
+  rly_uarts(tmp + 5 - l);
+}
+
 char buf[6];
 int fill = 0;
-void uartch(char ch) {
-  ++fill;
-  char out = buf[0];
-  for (int i = 0; i < 5; i++) {
-    buf[i] = buf[i + 1];
-  }
-  buf[5] = ch;
-  if (strncmp(buf, "\nCODE;", 6) == 0) {
-    // TODO: print out the code declaration
-    rly_uarts("\nconst uint8_t code[] = {");
-    rly_uarts("};");
-    fill = 0;
-  } else if (strncmp(buf, "\nDICT;", 6) == 0) {
-    // TODO: print out the data declaration
-    rly_uarts("\nconst uint16_t huffman[] = {");
-    rly_uarts("};");
-    fill = 0;
-  } else if (fill > 6) {
-    rly_uartch(out);
-  }
-}
+void uart_ch(char ch);
 
 void FLUSH() {
   if (fill > 6) fill = 6;
@@ -259,3 +264,37 @@ void LITERAL(int literal) {
 
 ///AUTOGEN START
 ///AUTOGEN END
+
+void uartch(char ch) {
+  ++fill;
+  char out = buf[0];
+  for (int i = 0; i < 5; i++) {
+    buf[i] = buf[i + 1];
+  }
+  buf[5] = ch;
+  if (strncmp(buf, "\nCODE;", 6) == 0) {
+    rly_uarts("\nconst uint8_t code[] = {");
+    for (int i = 0; i < sizeof(code)/sizeof(uint8_t); ++i) {
+      if (i > 0) {
+        rly_uarts(", ");
+      }
+      rly_uartint(code[i]);
+    }
+    rly_uarts("};");
+    fill = 0;
+  } else if (strncmp(buf, "\nDICT;", 6) == 0) {
+    rly_uarts("\nconst int16_t huffman[] = {");
+    for (int i = 0; i < sizeof(huffman)/sizeof(uint16_t); ++i) {
+      if (i > 0) {
+        rly_uarts(", ");
+      }
+      rly_uartint(huffman[i]);
+    }
+    rly_uarts("};");
+    fill = 0;
+  } else if (fill > 6) {
+    rly_uartch(out);
+  }
+}
+
+
