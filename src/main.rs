@@ -111,11 +111,8 @@ fn lz77_enc(input: &[u8]) -> Vec<Symbol> {
         match search_substr(&input[i..input.len()], &window) {
             Some((pos, len)) => {
                 assert!(pos < 256);
-                // assert!(len < 256);
-                // runs of length less than 4 are probably better encoded
-                // as literals; it's hard to be sure because of the Huffman
-                // encoding layer on top of this
-                if len < 4 {
+                // tweaking shows that 12 is apparently the optimum value for this
+                if len < 12 {
                     ret.push(Symbol::Literal(input[i] as usize));
                     window.push(&input[i..i+1]);
                     i += 1;
@@ -470,10 +467,10 @@ fn main() {
     };
 
     let stream = lz77_enc(string_parsed.as_bytes());
-    writeln!(stderr, "// orig {} 77z {}", string.len(), stream.len()).unwrap();
+    writeln!(stderr, "// orig parsed {} 77z {}", string_parsed.len(), stream.len()).unwrap();
     let (huffman_enc, huffman_len, dict) = huffman_enc(&stream);
     // writeln!(stderr, "// {:?}", dict).unwrap();
-    writeln!(stderr, "// huffman {} bits, {} bytes", huffman_len, (huffman_len + 7)/8).unwrap();
+    writeln!(stderr, "// huffman {} bits, {} bytes", huffman_len, huffman_enc.len()).unwrap();
 
     writeln!(stderr, "// checking decode...").unwrap();
     let dec_string = String::from_utf8(lz77_dec(&huffman_dec(&huffman_enc, huffman_len, &dict))).unwrap();
@@ -493,6 +490,7 @@ fn main() {
     }
     let huff_dict_ary = huffman_dict_c(&dict);
     writeln!(stderr, "// huffman dict {} entries, {} bytes", huff_dict_ary.len(), 2*huff_dict_ary.len()).unwrap();
+    writeln!(stderr, "// total len {} bytes", huffman_enc.len() + 2*huff_dict_ary.len()).unwrap();
     // stop from trying to encode the previous code
     println!("//+replace CODE;");
     println!("const uint8_t code[] = {}; const int len = {};", c_lit(&huffman_enc), huffman_len);
