@@ -205,7 +205,7 @@ void rly_uarts(char* s) {
   }
 }
 
-void rly_uartint(int16_t i) {
+void rly_uartint(long i) {
   const char nums[] = "0123456789";
   char tmp[6];
   int l = 0;
@@ -218,7 +218,7 @@ void rly_uartint(int16_t i) {
     i = -i;
   }
   while (i) {
-    tmp[4-l] = num[i % 10];
+    tmp[4-l] = nums[i % 10];
     i = i / 10;
     ++l;
   }
@@ -252,7 +252,7 @@ void LITERAL(int literal) {
       window[off] = c;
       off = (off + 1) % 256;
 
-      uartch(ch);
+      uartch(c);
     }
     last_offset = -1;
   } else {
@@ -273,6 +273,8 @@ void uartch(char ch) {
   }
   buf[5] = ch;
   if (strncmp(buf, "\nCODE;", 6) == 0) {
+    // write flushed char
+    rly_uartch(out);
     rly_uarts("\nconst uint8_t code[] = {");
     for (int i = 0; i < sizeof(code)/sizeof(uint8_t); ++i) {
       if (i > 0) {
@@ -280,9 +282,13 @@ void uartch(char ch) {
       }
       rly_uartint(code[i]);
     }
-    rly_uarts("};");
+    rly_uarts("}; const long len = ");
+    rly_uartint(len);
+    rly_uartch(';');
     fill = 0;
   } else if (strncmp(buf, "\nDICT;", 6) == 0) {
+    // write flushed char
+    rly_uartch(out);
     rly_uarts("\nconst int16_t huffman[] = {");
     for (int i = 0; i < sizeof(huffman)/sizeof(uint16_t); ++i) {
       if (i > 0) {
@@ -296,5 +302,3 @@ void uartch(char ch) {
     rly_uartch(out);
   }
 }
-
-

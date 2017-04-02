@@ -500,7 +500,7 @@ fn main() {
     writeln!(stderr, "// total len {} bytes", huffman_enc.len() + 2*huff_dict_ary.len()).unwrap();
     // stop from trying to encode the previous code
     println!("//+replace CODE;");
-    println!("const uint8_t code[] = {}; const int len = {};", c_lit(&huffman_enc), huffman_len);
+    println!("const uint8_t code[] = {}; const long len = {};", c_lit(&huffman_enc), huffman_len);
     println!("");
     println!("//+replace DICT;");
     println!("const int16_t huffman[] = {};", c_lit_int(&huff_dict_ary));
