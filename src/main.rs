@@ -407,7 +407,7 @@ fn huffman_dict_c(dict: &HuffmanDict<Symbol>) -> Vec<isize> {
                         buf.push(-(c as isize));
                     },
                     Symbol::Offset(o) => {
-                        buf.push(-((o + 256) as isize));
+                        buf.push(-((o + 4096) as isize));
                     }
                 }
             }
@@ -421,7 +421,29 @@ fn huffman_dict_c(dict: &HuffmanDict<Symbol>) -> Vec<isize> {
 
 fn huffman_dec_f() -> String {
     // TODO
-    String::from("")
+    String::from(r"
+void dec() {
+  int idx = 0, pos = 0, lit = 0;
+  while (pos < len) {
+    int dict_pos = 0;
+    while (huffman[dict_pos] > 0) {
+      uint8_t bit = code[pos / 8] & (1 << (pos % 8));
+      ++pos;
+      if (bit) {
+        dict_pos = huffman[dict_pos + 1];
+      } else {
+        dict_pos = huffman[dict_pos];
+      }
+    }
+    lit = -huffman[dict_pos];
+    if (lit > 4096) {
+      OFFSET(lit - 4096);
+    } else {
+      LITERAL(lit);
+    }
+  }
+  FLUSH();
+}")
 }
 
 fn main() {
@@ -476,7 +498,6 @@ fn main() {
     println!("const uint8_t code[] = {}; const int len = {};", c_lit(&huffman_enc), huffman_len);
     println!("");
     println!("//+replace DICT;");
-    println!("const uint16_t huffman[] = {};", c_lit_int(&huff_dict_ary));
-    println!("");
+    println!("const int16_t huffman[] = {};", c_lit_int(&huff_dict_ary));
     println!("{}", huffman_dec_f());
 }
