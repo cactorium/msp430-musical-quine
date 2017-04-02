@@ -20,4 +20,4 @@ while cur_file != new_file:
   new_file = p.stdout
   count += 1
 
-print(cur_file.decode('utf-8'))
+print(cur_file.decode('utf-8'), end='')

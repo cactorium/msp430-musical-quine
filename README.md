@@ -10,4 +10,3 @@ takes the source code in stdin and outputs the altered version in stdout.
 
 TODOS
 - the music part
-- fix extra generated newline

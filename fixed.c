@@ -330,4 +330,3 @@ void uartch(char ch) {
     rly_uartch(out);
   }
 }
-
