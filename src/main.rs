@@ -316,13 +316,13 @@ fn huffman_dec<S: Copy>(input: &[u8], len: usize, dict: &HuffmanDict<S>) -> Vec<
     match dict_pos {
          &Huffman::Leaf(sym) => {
             ret.push(sym);
-            dict_pos = &*dict.root;
          },
          _ => unreachable!("decoder reached EOS in wrong state"),
     }
     ret
 }
 
+/*
 fn huffman_dec_c(input: &HuffmanDict<Symbol>) -> String {
     let mut s = String::from("int pos = 0;\n");
     s += "void dec() {\n";
@@ -367,6 +367,7 @@ fn huffman_dec_c(input: &HuffmanDict<Symbol>) -> String {
     s += "}";
     s
 }
+*/
 
 fn c_lit(chars: &[u8]) -> String {
     let mut s = String::from("{");
@@ -377,13 +378,59 @@ fn c_lit(chars: &[u8]) -> String {
     s
 }
 
+fn c_lit_int(chars: &[isize]) -> String {
+    let mut s = String::from("{");
+    for c in chars {
+        s += format!("{}, ", *c).as_str();
+    }
+    s += "0}"; // fuck it, we're generating C anyways
+    s
+}
+
+fn huffman_dict_c(dict: &HuffmanDict<Symbol>) -> Vec<isize> {
+    let mut ret = Vec::new();
+    fn recursively_traverse(buf: &mut Vec<isize>, node: &Huffman<Symbol>) -> usize {
+        let pos = buf.len();
+        match node {
+            &Huffman::Branch(ref a, ref b) => {
+                // push some temporary values to rewrite later
+                buf.push(0);
+                buf.push(0);
+                let aidx = recursively_traverse(buf, &*a);
+                let bidx = recursively_traverse(buf, &*b);
+                buf[pos] = aidx as isize;
+                buf[pos+1] = bidx as isize;
+            },
+            &Huffman::Leaf(sym) => {
+                match sym {
+                    Symbol::Literal(c) => {
+                        buf.push(-(c as isize));
+                    },
+                    Symbol::Offset(o) => {
+                        buf.push(-((o + 256) as isize));
+                    }
+                }
+            }
+        }
+        pos
+    }
+
+    let _ = recursively_traverse(&mut ret, &*dict.root);
+    ret
+}
+
+fn huffman_dec_f() -> String {
+    // TODO
+    String::from("")
+}
+
 fn main() {
     use std::io;
     use std::io::{Read, Write};
     let stderr = &mut io::stderr();
 
     let mut string = String::new();
-    let mut input = io::stdin().read_to_string(&mut string);
+    io::stdin().read_to_string(&mut string).unwrap();
 
     let string_parsed = {
         use std::iter;
@@ -422,9 +469,14 @@ fn main() {
             autogen_start = line.starts_with("///AUTOGEN START");
         }
     }
+    let huff_dict_ary = huffman_dict_c(&dict);
+    writeln!(stderr, "// huffman dict {} entries, {} bytes", huff_dict_ary.len(), 2*huff_dict_ary.len()).unwrap();
     // stop from trying to encode the previous code
     println!("//+replace CODE;");
-    println!("const char code[] = {}; const int len = {};", c_lit(&huffman_enc), huffman_len);
+    println!("const uint8_t code[] = {}; const int len = {};", c_lit(&huffman_enc), huffman_len);
     println!("");
-    println!("{}", huffman_dec_c(&dict));
+    println!("//+replace DICT;");
+    println!("const uint16_t huffman[] = {};", c_lit_int(&huff_dict_ary));
+    println!("");
+    println!("{}", huffman_dec_f());
 }
